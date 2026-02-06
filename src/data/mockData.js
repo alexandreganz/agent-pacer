@@ -529,10 +529,11 @@ const scenarioDVariations = [
           multiplier: overMultiplier,
           overspendAmount: c.spend - c.baseBudget,
         };
+        c.metrics = generateMetrics(c, true);
       } else {
-        c.spend = Math.round(c.baseBudget * (1 + random.between(-5, 5) / 100));
+        c.spend = Math.round(c.baseBudget * (1 + random.between(-3, 3) / 100));
+        c.metrics = generateMetrics(c);
       }
-      c.metrics = generateMetrics(c, idx === problemIdx);
     });
 
     return {
@@ -543,75 +544,7 @@ const scenarioDVariations = [
     };
   },
 
-  // Variation 2: Multiple critical campaigns
-  () => {
-    const now = new Date();
-    const templates = random.pickN(campaignTemplates, random.int(6, 7));
-    const campaigns = buildCampaigns(templates, now);
-
-    const problemCount = random.int(2, 3);
-    const problemIndices = random.pickN([...Array(campaigns.length).keys()], problemCount);
-    let totalOverspend = 0;
-
-    campaigns.forEach((c, idx) => {
-      if (problemIndices.includes(idx)) {
-        const overVariance = random.between(30, 80);
-        c.spend = Math.round(c.baseBudget * (1 + overVariance / 100));
-        c.critical = {
-          type: 'overspend',
-          variance: overVariance,
-          overspendAmount: c.spend - c.baseBudget,
-        };
-        totalOverspend += c.critical.overspendAmount;
-      } else {
-        c.spend = Math.round(c.baseBudget * (1 + random.between(-5, 5) / 100));
-      }
-      c.metrics = generateMetrics(c, problemIndices.includes(idx));
-    });
-
-    return {
-      variation: 'Multiple Critical Overspends',
-      description: `${problemCount} campaigns over budget - $${totalOverspend.toLocaleString()} total overspend`,
-      campaigns,
-      problemIndices,
-    };
-  },
-
-  // Variation 3: Zero delivery (critical underspend)
-  () => {
-    const now = new Date();
-    const templates = random.pickN(campaignTemplates, random.int(5, 6));
-    const campaigns = buildCampaigns(templates, now);
-
-    const problemCount = random.int(1, 2);
-    const problemIndices = random.pickN([...Array(campaigns.length).keys()], problemCount);
-    let totalLost = 0;
-
-    campaigns.forEach((c, idx) => {
-      if (problemIndices.includes(idx)) {
-        c.spend = 0;
-        c.critical = {
-          type: 'zero_delivery',
-          lostBudget: c.baseBudget,
-        };
-        totalLost += c.baseBudget;
-        // Zero delivery = zero metrics
-        c.metrics = { impressions: 0, clicks: 0, ctr: 0, cpc: 0, cpm: 0, conversions: 0, revenue: 0, roas: 0 };
-      } else {
-        c.spend = Math.round(c.baseBudget * (1 + random.between(-5, 5) / 100));
-        c.metrics = generateMetrics(c);
-      }
-    });
-
-    return {
-      variation: 'Zero Delivery Emergency',
-      description: `${problemCount} campaign(s) with $0 spend - $${totalLost.toLocaleString()} budget at risk`,
-      campaigns,
-      problemIndices,
-    };
-  },
-
-  // Variation 4: Sudden spike (fraud indicator)
+  // Variation 2: Suspicious spend spike (fraud indicator)
   () => {
     const now = new Date();
     const templates = random.pickN(campaignTemplates, random.int(5, 6));
@@ -629,10 +562,11 @@ const scenarioDVariations = [
           possibleFraud: true,
           overspendAmount: c.spend - c.baseBudget,
         };
+        c.metrics = generateMetrics(c, true);
       } else {
-        c.spend = Math.round(c.baseBudget * (1 + random.between(-5, 5) / 100));
+        c.spend = Math.round(c.baseBudget * (1 + random.between(-3, 3) / 100));
+        c.metrics = generateMetrics(c);
       }
-      c.metrics = generateMetrics(c, idx === problemIdx);
     });
 
     return {
@@ -643,38 +577,35 @@ const scenarioDVariations = [
     };
   },
 
-  // Variation 5: Budget exhaustion
+  // Variation 3: Budget exhaustion on single campaign
   () => {
     const now = new Date();
-    const templates = random.pickN(campaignTemplates, random.int(5, 7));
+    const templates = random.pickN(campaignTemplates, random.int(5, 6));
     const campaigns = buildCampaigns(templates, now);
 
-    // Multiple campaigns hitting 100%+ early in the day
-    const problemCount = random.int(3, 4);
-    const problemIndices = random.pickN([...Array(campaigns.length).keys()], problemCount);
-    let totalOver = 0;
+    const problemIdx = random.int(0, campaigns.length - 1);
+    const overVariance = random.between(55, 90);
 
     campaigns.forEach((c, idx) => {
-      if (problemIndices.includes(idx)) {
-        const overVariance = random.between(28, 50);
+      if (idx === problemIdx) {
         c.spend = Math.round(c.baseBudget * (1 + overVariance / 100));
         c.critical = {
           type: 'budget_exhaustion',
           variance: overVariance,
           overspendAmount: c.spend - c.baseBudget,
         };
-        totalOver += c.critical.overspendAmount;
+        c.metrics = generateMetrics(c, true);
       } else {
-        c.spend = Math.round(c.baseBudget * (1 + random.between(-5, 5) / 100));
+        c.spend = Math.round(c.baseBudget * (1 + random.between(-3, 3) / 100));
+        c.metrics = generateMetrics(c);
       }
-      c.metrics = generateMetrics(c, problemIndices.includes(idx));
     });
 
     return {
-      variation: 'Portfolio Budget Exhaustion',
-      description: `${problemCount} campaigns exhausted daily budget early - $${totalOver.toLocaleString()} over`,
+      variation: 'Budget Exhaustion',
+      description: `${campaigns[problemIdx].name} exhausted daily budget early - $${campaigns[problemIdx].critical.overspendAmount.toLocaleString()} over`,
       campaigns,
-      problemIndices,
+      problemIndices: [problemIdx],
     };
   },
 ];

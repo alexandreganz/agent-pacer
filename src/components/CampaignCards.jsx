@@ -343,6 +343,14 @@ function SummaryBanner({ campaigns }) {
   return null;
 }
 
+function severityRank(campaign) {
+  if (campaign.paused) return 0;
+  if (campaign.status === 'critical') return 1;
+  if (getDataQualityIssues(campaign).length > 0) return 2;
+  if (campaign.status === 'warning') return 3;
+  return 4;
+}
+
 export function CampaignCards({ campaigns, visible }) {
   if (!visible || campaigns.length === 0) {
     return (
@@ -355,11 +363,13 @@ export function CampaignCards({ campaigns, visible }) {
     );
   }
 
+  const sorted = [...campaigns].sort((a, b) => severityRank(a) - severityRank(b));
+
   return (
     <div className="h-full overflow-y-auto p-4">
       <SummaryBanner campaigns={campaigns} />
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4 items-start">
-        {campaigns.map((campaign, index) => (
+        {sorted.map((campaign, index) => (
           <CampaignCard key={campaign.id} campaign={campaign} index={index} />
         ))}
       </div>

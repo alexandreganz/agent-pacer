@@ -157,19 +157,8 @@ function App() {
       const log = logs[index];
       setCurrentLogIndex(index);
 
-      // Show campaigns after reconciliation
-      if (log.message.includes('Reconciling')) {
-        setShowCampaigns(true);
-      }
-
-      // Show insights loading after LLM mention
-      if (log.message.includes('Generating LLM')) {
-        setShowInsights(true);
-        setIsLoadingInsight(true);
-      }
-
       // Add log to displayed list after a delay
-      const delay = log.message.length > 0 ? Math.min(log.message.length * 20, 600) : 100;
+      const delay = log.message.length > 0 ? Math.min(log.message.length * 12, 350) : 60;
 
       logIntervalRef.current = setTimeout(() => {
         setDisplayedLogs(prev => [...prev, log]);
@@ -228,19 +217,27 @@ function App() {
       setConfidenceData(result.confidence);
       setAgentLogs(result.logs);
 
-      // Stream the logs to UI
+      // Stream the logs to UI, then chain: campaigns → insights
       streamLogs(result.logs, () => {
         setIsRunning(false);
-        setShowCampaigns(true);
-        setShowInsights(true);
 
-        // Generate insights for all scenarios
-        generateLLMInsight(
-          result.campaigns,
-          result.overallStatus,
-          scenarioMeta[scenarioId].name,
-          result.timeContext
-        );
+        // Step 1: Show campaigns after a short pause
+        setTimeout(() => {
+          setShowCampaigns(true);
+
+          // Step 2: Show insights panel + start generating after campaigns appear
+          setTimeout(() => {
+
+            setShowInsights(true);
+            setIsLoadingInsight(true);
+            generateLLMInsight(
+              result.campaigns,
+              result.overallStatus,
+              scenarioMeta[scenarioId].name,
+              result.timeContext
+            );
+          }, 300);
+        }, 200);
       });
 
     } catch (error) {

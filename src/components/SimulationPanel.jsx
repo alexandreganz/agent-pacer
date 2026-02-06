@@ -55,11 +55,9 @@ const scenarioConfig = {
     hoverColor: 'hover:bg-status-critical/80',
     borderColor: 'border-status-critical',
     variations: [
-      { name: 'Critical Overspend', desc: 'One campaign 250-450% over budget with anomalous metrics' },
-      { name: 'Multiple Critical', desc: '2-3 campaigns over budget with degraded ROAS' },
-      { name: 'Zero Delivery', desc: 'Campaigns with $0 spend and zero metrics' },
-      { name: 'Suspicious Spike', desc: '500-1000% spike with fraud-signal metrics (high impr, low conv)' },
-      { name: 'Budget Exhaustion', desc: '3-4 campaigns exhausted daily budget early' },
+      { name: 'Critical Overspend', desc: 'One campaign 250-450% over budget — auto-paused' },
+      { name: 'Suspicious Spike', desc: 'One campaign 500-1000% spike with fraud signals — auto-paused' },
+      { name: 'Budget Exhaustion', desc: 'One campaign exhausted daily budget early (55-90% over) — auto-paused' },
     ],
   },
 };
