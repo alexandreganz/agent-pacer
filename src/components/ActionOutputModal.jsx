@@ -182,54 +182,58 @@ function ActionOutputContent({ output }) {
     );
   }
 
-  if (actionOutput.type === 'BID_ADJUSTMENT_RECOMMENDED') {
-    const rec = actionOutput.recommendation;
+  if (actionOutput.type === 'BID_ADJUSTMENT_APPLIED') {
+    const adj = actionOutput.adjustment;
     return (
       <div className="space-y-6">
         {/* Status Banner */}
-        <div className="bg-status-warning/20 border border-status-warning/50 rounded-lg p-4 flex items-center gap-4">
-          <div className="w-12 h-12 rounded-full bg-status-warning/30 flex items-center justify-center">
-            <svg className="w-6 h-6 text-status-warning" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+        <div className="bg-status-healthy/20 border border-status-healthy/50 rounded-lg p-4 flex items-center gap-4">
+          <div className="w-12 h-12 rounded-full bg-status-healthy/30 flex items-center justify-center">
+            <svg className="w-6 h-6 text-status-healthy" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
             </svg>
           </div>
           <div>
-            <div className="text-white font-bold">Bid Adjustment Recommended</div>
-            <div className="text-status-warning">{output.campaignName}</div>
+            <div className="text-white font-bold">Bid Adjustment Applied</div>
+            <div className="text-status-healthy">{output.campaignName}</div>
           </div>
         </div>
 
-        {/* Recommendation Details */}
+        {/* Adjustment Details */}
         <div className="bg-gray-800 rounded-lg p-4">
-          <h3 className="text-sm font-semibold text-gray-400 uppercase tracking-wide mb-3">Proposed Change</h3>
+          <h3 className="text-sm font-semibold text-gray-400 uppercase tracking-wide mb-3">Applied Change</h3>
           <div className="grid grid-cols-2 gap-4">
             <div>
               <div className="text-gray-500 text-xs">Direction</div>
-              <div className="text-white font-medium">{rec.proposedChange.direction} by {rec.proposedChange.percentage}%</div>
+              <div className="text-white font-medium">{adj.change.direction} by {adj.change.percentage}%</div>
             </div>
             <div>
               <div className="text-gray-500 text-xs">Status</div>
-              <div className="text-status-warning font-medium">{rec.status}</div>
+              <div className="text-status-healthy font-medium">{adj.status}</div>
             </div>
             <div>
               <div className="text-gray-500 text-xs">Current Spend</div>
-              <div className="text-white font-medium">${rec.currentSpend?.toLocaleString()}</div>
+              <div className="text-white font-medium">${adj.currentSpend?.toLocaleString()}</div>
             </div>
             <div>
               <div className="text-gray-500 text-xs">Variance</div>
-              <div className="text-white font-medium">{rec.variance}%</div>
+              <div className="text-white font-medium">{adj.variance}%</div>
             </div>
           </div>
         </div>
 
-        {/* Draft API Call */}
+        {/* Executed API Call */}
         <div>
-          <h3 className="text-sm font-semibold text-gray-400 uppercase tracking-wide mb-3">Draft API Call (Pending Approval)</h3>
+          <h3 className="text-sm font-semibold text-gray-400 uppercase tracking-wide mb-3">API Call (Executed)</h3>
           <div className="bg-gray-950 rounded-lg p-4 font-mono text-sm overflow-x-auto">
-            <div className="text-yellow-400 mb-2">
-              {actionOutput.draftApiCall.method} {actionOutput.draftApiCall.endpoint}
+            <div className="text-emerald-400 mb-2">
+              {actionOutput.apiCall.method} {actionOutput.apiCall.endpoint}
             </div>
-            <pre className="text-gray-300">{JSON.stringify(actionOutput.draftApiCall.body, null, 2)}</pre>
+            <pre className="text-gray-300">{JSON.stringify(actionOutput.apiCall.body, null, 2)}</pre>
+            <div className="mt-3 pt-3 border-t border-gray-800">
+              <div className="text-emerald-400 text-xs mb-1">Response: {actionOutput.apiCall.response.status}</div>
+              <pre className="text-gray-400 text-xs">{JSON.stringify(actionOutput.apiCall.response.body, null, 2)}</pre>
+            </div>
           </div>
         </div>
       </div>

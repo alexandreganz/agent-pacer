@@ -18,6 +18,12 @@ export async function generateInsights({ campaigns, overallStatus, scenarioName,
     return baseAnalysis;
   }
 
+  // Skip API call for healthy portfolios — rule-based analysis is sufficient
+  if (overallStatus === 'healthy') {
+    console.log('[Gemini] Healthy portfolio — skipping API call');
+    return baseAnalysis;
+  }
+
   try {
     const prompt = buildSimplePrompt(campaigns, overallStatus);
     const response = await fetch(`${GEMINI_API_URL}?key=${GEMINI_API_KEY}`, {
@@ -72,7 +78,7 @@ function generateBaseAnalysis(campaigns, overallStatus, timeContext) {
 
     // Determine severity
     let severity = 'LOW';
-    if (campaign.paused || Math.abs(variance) > 25) severity = 'CRITICAL';
+    if (campaign.paused || Math.abs(variance) > 50) severity = 'CRITICAL';
     else if (Math.abs(variance) > 10) severity = 'HIGH';
     else if (campaign.discrepancy) severity = 'HIGH';
     else if (Math.abs(variance) > 5) severity = 'MEDIUM';
@@ -92,6 +98,12 @@ function generateBaseAnalysis(campaigns, overallStatus, timeContext) {
         ? `Spend surging with poor performance (ROAS ${m.roas}x). Likely causes: bot/invalid traffic inflating impressions without conversions, bid multiplier misconfiguration, or audience saturation`
         : 'Likely causes: bid multiplier misconfiguration, automated rule malfunction, or sudden spike in auction competitiveness';
       actionRequired = `1) Review bid settings in ${campaign.platform.toUpperCase()} UI, 2) Check automated rules for unintended triggers, 3) Audit change history for last 24h, 4) Verify no fraudulent traffic patterns`;
+      // Fraud signal enrichment
+      if (campaign.performanceRating === 'fraud_signal') {
+        issue += ' FRAUD SIGNAL: Extremely high impressions with near-zero conversions indicates bot/invalid traffic.';
+        rootCause = `Bot/invalid traffic confirmed: ${m?.impressions?.toLocaleString() || 'N/A'} impressions yielded only ${m?.conversions ?? 0} conversions (${m?.ctr ?? 0}% CTR). This is a classic click fraud or impression fraud pattern — automated systems inflating delivery without real user engagement.`;
+        actionRequired = `URGENT: 1) Pause campaign immediately (done), 2) File invalid traffic dispute with ${campaign.platform.toUpperCase()}, 3) Request spend credit for fraudulent impressions, 4) Review placement/network exclusion lists, 5) Enable enhanced fraud detection`;
+      }
     } else if (campaign.discrepancy) {
       const diff = Math.abs(campaign.discrepancy.api - campaign.discrepancy.internal);
       const apiHigher = campaign.discrepancy.api > campaign.discrepancy.internal;
@@ -135,11 +147,11 @@ function generateBaseAnalysis(campaigns, overallStatus, timeContext) {
       issue = `DATA QUALITY ALERT: Confidence score ${Math.round(campaign.confidence * 100)}% (below 70% threshold). Issues: ${issues.join('; ')}. Agent BLOCKED autonomous action — human verification required.`;
       rootCause = rootCauseText || 'Multiple data quality factors contributing to low confidence score.';
       actionRequired = (actionText || `Manually verify data in ${campaign.platform.toUpperCase()} platform UI. `) + 'DO NOT approve automated actions until data quality is confirmed.';
-    } else if (variance > 25) {
+    } else if (variance > 50) {
       issue = `CRITICAL OVERSPEND: Spent $${campaign.spend.toLocaleString()} against $${campaign.cap.toLocaleString()} cap (${variance.toFixed(1)}% over = $${varianceAmount.toLocaleString()} excess spend)`;
       rootCause = 'Aggressive bidding, high auction competition, or budget pacing set to "accelerated" instead of "standard"';
       actionRequired = `1) Reduce bids by 25-30%, 2) Switch to standard delivery, 3) Add frequency caps, 4) Review audience overlap with other campaigns`;
-    } else if (variance < -25) {
+    } else if (variance < -50) {
       issue = `CRITICAL UNDERSPEND: Only spent $${campaign.spend.toLocaleString()} of $${campaign.cap.toLocaleString()} cap (${variance.toFixed(1)}% under = $${Math.abs(varianceAmount).toLocaleString()} unspent)`;
       rootCause = 'Bids too low to win auctions, audience too narrow, ad disapprovals, or creative fatigue';
       actionRequired = `1) Increase bids by 30-40%, 2) Expand audience targeting, 3) Check ad approval status, 4) Refresh creative assets`;
@@ -151,6 +163,22 @@ function generateBaseAnalysis(campaigns, overallStatus, timeContext) {
       issue = `Moderate underspend: $${campaign.spend.toLocaleString()} vs $${campaign.cap.toLocaleString()} cap (${variance.toFixed(1)}% under)`;
       rootCause = 'Bids may be slightly below competitive threshold';
       actionRequired = `Increase bids by 10-15% and monitor delivery rate`;
+    }
+
+    // Enrich with performance context for severity-modified campaigns
+    if (campaign.performanceRating && campaign.performanceRating !== 'normal' && !campaign.paused) {
+      const perfLabel = campaign.performanceRating === 'fraud_signal' ? 'FRAUD SIGNAL' : campaign.performanceRating.toUpperCase();
+      const perfDetail = campaign.performanceSignals?.[0] || '';
+      if (campaign.severityModified) {
+        issue += ` [PERFORMANCE ${perfLabel}: severity adjusted from ${campaign.originalSeverity} → ${campaign.status} — ${campaign.severityModReason}]`;
+      }
+      if (campaign.performanceRating === 'strong' && campaign.direction === 'overspending') {
+        rootCause += `. Note: Campaign is profitable (${campaign.metrics?.roas}x ROAS, ${campaign.metrics?.conversions} conversions) — overspend is generating positive returns`;
+        actionRequired = `Monitor but do not throttle. Campaign is delivering strong ROI despite exceeding budget. Consider increasing daily cap to capture additional profitable demand.`;
+      } else if (campaign.performanceRating === 'poor') {
+        rootCause += `. Performance is poor (${campaign.metrics?.roas}x ROAS) — spend is not generating adequate returns`;
+        actionRequired += `. Priority: Audit creative performance and audience targeting before adjusting bids — the issue may be conversion-side, not delivery-side.`;
+      }
     }
 
     return {
@@ -189,6 +217,7 @@ function generateBaseAnalysis(campaigns, overallStatus, timeContext) {
   const warningCount = campaigns.filter(c => c.status === 'warning').length;
   const discrepancyCount = campaigns.filter(c => c.discrepancy).length;
   const lowConfidenceCount = campaigns.filter(c => c.isLowConfidence && !c.discrepancy).length;
+  const dataQualityCount = campaigns.filter(c => c.discrepancy || c.isLowConfidence).length;
 
   let title = 'All Campaigns Healthy';
   let summary = `All ${campaigns.length} campaigns pacing within normal thresholds.`;
@@ -199,15 +228,16 @@ function generateBaseAnalysis(campaigns, overallStatus, timeContext) {
   } else if (criticalCount > 0) {
     title = `${criticalCount} Critical Alert${criticalCount > 1 ? 's' : ''}`;
     summary = `${criticalCount} campaign${criticalCount > 1 ? 's' : ''} showing critical variance requiring immediate attention.`;
-  } else if (discrepancyCount > 0) {
-    const totalDiscrepancy = campaigns
-      .filter(c => c.discrepancy)
-      .reduce((sum, c) => sum + Math.abs(c.discrepancy.api - c.discrepancy.internal), 0);
-    title = `Data Mismatch — Human Review Required`;
-    summary = `${discrepancyCount} campaign${discrepancyCount > 1 ? 's have' : ' has'} a $${totalDiscrepancy.toLocaleString()} discrepancy between the ad platform API and our internal tracking system. The agent has BLOCKED autonomous action because it cannot determine which data source is correct. A human operator must verify the actual spend in the platform UI before any pacing adjustments are made.`;
-  } else if (lowConfidenceCount > 0) {
+  } else if (dataQualityCount > 0) {
     title = `Data Quality Issues — Human Review Required`;
-    summary = `${lowConfidenceCount} campaign${lowConfidenceCount > 1 ? 's have' : ' has'} data quality issues preventing autonomous action. The agent detected inconsistencies in campaign data (name mismatches, corrupted metadata, or stale data) and requires human verification before proceeding.`;
+    if (discrepancyCount > 0) {
+      const totalDiscrepancy = campaigns
+        .filter(c => c.discrepancy)
+        .reduce((sum, c) => sum + Math.abs(c.discrepancy.api - c.discrepancy.internal), 0);
+      summary = `${dataQualityCount} campaign${dataQualityCount > 1 ? 's have' : ' has'} data quality issues. ${discrepancyCount} with spend discrepancies totalling $${totalDiscrepancy.toLocaleString()}${lowConfidenceCount > 0 ? `, ${lowConfidenceCount} with additional data integrity issues (name mismatches, corrupted metadata, or stale data)` : ''}. The agent has BLOCKED autonomous action — human verification required.`;
+    } else {
+      summary = `${dataQualityCount} campaign${dataQualityCount > 1 ? 's have' : ' has'} data quality issues preventing autonomous action. The agent detected inconsistencies in campaign data (name mismatches, corrupted metadata, or stale data) and requires human verification before proceeding.`;
+    }
   } else if (warningCount > 0) {
     title = `${warningCount} Warning${warningCount > 1 ? 's' : ''} Detected`;
     summary = `${warningCount} campaign${warningCount > 1 ? 's' : ''} outside optimal pacing thresholds.`;
@@ -231,10 +261,8 @@ function generateBaseAnalysis(campaigns, overallStatus, timeContext) {
       ? `Review ${pausedCount} paused campaign${pausedCount > 1 ? 's' : ''} and investigate root cause before reactivating`
       : criticalCount > 0
       ? `Address ${criticalCount} critical campaign${criticalCount > 1 ? 's' : ''} immediately to prevent budget loss`
-      : discrepancyCount > 0
-      ? `URGENT: ${discrepancyCount} campaign${discrepancyCount > 1 ? 's show' : ' shows'} a data mismatch between the ad platform API and internal systems. Log into the platform UI to manually verify actual spend before approving any automated actions. If the platform confirms the higher number, budget may be at risk. If it confirms the lower number, the API response may be stale or corrupted.`
-      : lowConfidenceCount > 0
-      ? `REVIEW REQUIRED: ${lowConfidenceCount} campaign${lowConfidenceCount > 1 ? 's have' : ' has'} data quality issues. Verify campaign data in platform UI before approving any automated actions.`
+      : dataQualityCount > 0
+      ? `URGENT: ${dataQualityCount} campaign${dataQualityCount > 1 ? 's have' : ' has'} data quality issues. Log into the platform UI to manually verify campaign data before approving any automated actions.`
       : null,
     hypotheticalScenarios: (overallStatus === 'escalated') ? [
       {
@@ -337,6 +365,13 @@ Be specific — mention actual ad platform settings, API sync mechanisms, tracki
       info += `AUTO-PAUSED, spent $${c.spend.toLocaleString()} vs $${c.cap.toLocaleString()} cap (${c.variance}% over)`;
     } else {
       info += `${c.variance > 0 ? 'overspending' : 'underspending'} at ${c.variance}% (spend: $${c.spend.toLocaleString()}, cap: $${c.cap.toLocaleString()})`;
+    }
+    // Add performance context
+    if (c.performanceRating && c.performanceRating !== 'normal') {
+      const m = c.metrics;
+      info += ` | Performance: ${c.performanceRating.toUpperCase()}`;
+      if (m) info += ` (ROAS: ${m.roas}x, ${m.conversions} conversions, CTR: ${m.ctr}%)`;
+      if (c.severityModified) info += ` [severity adjusted: ${c.originalSeverity} → ${c.status}]`;
     }
     return info;
   }).join('\n');
@@ -464,14 +499,14 @@ function generateActionOutput(campaign) {
     const isUnder = campaign.variance < 0;
     const bidChange = isUnder ? 15 : -15;
     return {
-      type: 'BID_ADJUSTMENT_RECOMMENDED',
-      displayName: 'Bid Adjustment Recommendation',
+      type: 'BID_ADJUSTMENT_APPLIED',
+      displayName: 'Bid Adjustment Applied',
       timestamp,
-      recommendation: {
+      adjustment: {
         campaignId: campaign.id,
         campaignName: campaign.name,
-        status: 'PENDING_APPROVAL',
-        proposedChange: {
+        status: 'APPLIED',
+        change: {
           type: 'BID_MODIFIER',
           direction: isUnder ? 'INCREASE' : 'DECREASE',
           percentage: Math.abs(bidChange),
@@ -480,12 +515,16 @@ function generateActionOutput(campaign) {
         targetSpend: campaign.cap,
         variance: campaign.variance,
       },
-      draftApiCall: {
+      apiCall: {
         method: 'POST',
         endpoint: `https://ads.googleapis.com/v14/customers/123456789/campaigns/${campaign.id}:updateBids`,
         body: {
           bidModifier: isUnder ? 1.15 : 0.85,
-          reason: `Variance correction: ${campaign.variance}%`,
+          reason: `Autonomous variance correction: ${campaign.variance}%`,
+        },
+        response: {
+          status: 200,
+          body: { success: true, message: 'Bid modifier updated successfully' },
         },
       },
     };

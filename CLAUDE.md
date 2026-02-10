@@ -34,10 +34,10 @@ The agent in `PacingAgent.js` processes campaigns through these states:
 |-------|-------------|
 | FETCHING | Loads platform API data + internal tracker data |
 | RECONCILING | Cross-references campaigns between sources, detects discrepancies |
-| ANALYZING | Classifies variance: ≤10% healthy, 10-25% warning, >25% critical |
+| ANALYZING | Classifies variance (≤10% healthy, 10-50% warning, >50% critical; dynamic 30% off-hours) + performance modifier (ROAS, CTR, conversions) adjusts severity |
 | SCORING | Confidence score: 30% metadata + 30% name similarity + 20% freshness + 20% spend consistency |
-| ROUTING | If confidence < 70% → escalate. Otherwise route by severity |
-| ACTING | Execute action: log, alert (bid adjustment), pause, or escalate |
+| ROUTING | If confidence < 70% → escalate. Otherwise route by adjusted severity |
+| ACTING | Execute action: log, auto-adjust bid, pause, or escalate |
 | COMPLETE | Done |
 
 ### Scenarios
@@ -46,8 +46,8 @@ The agent in `PacingAgent.js` processes campaigns through these states:
 |----|------|----------|
 | A | Healthy | All campaigns ≤10% variance, high confidence → log only |
 | B | Data Mismatch | Spend discrepancy between sources, low confidence → escalate |
-| C | Warning | 10-25% overspend, high confidence → recommend bid adjustment |
-| D | Critical | >25% overspend, high confidence → auto-pause + notify team |
+| C | Warning | 10-50% overspend, high confidence → auto-adjust bid + notify team |
+| D | Critical | >50% overspend, high confidence → auto-pause + notify team |
 
 Each scenario has 3-5 random variations for realistic variety.
 
@@ -59,6 +59,7 @@ Each scenario has 3-5 random variations for realistic variety.
 | `src/agents/PacingAgent.js` | State machine agent, produces log entries and final results |
 | `src/agents/ConfidenceScorer.js` | Levenshtein distance, metadata matching, spend consistency scoring |
 | `src/agents/VarianceAnalyzer.js` | Variance classification with severity thresholds |
+| `src/agents/PerformanceModifier.js` | ROAS/CTR/conversion-based severity adjustment + fraud detection + bid multipliers |
 | `src/data/mockData.js` | Dynamic mock data generators for all 4 scenarios |
 | `src/services/gemini.js` | Gemini API integration + rule-based fallback for insights and action outputs |
 | `src/utils/timeContext.js` | Off-hours detection with module-level `_forceOffHours` toggle for demos |
@@ -67,7 +68,7 @@ Each scenario has 3-5 random variations for realistic variety.
 | `src/components/CampaignCards.jsx` | Campaign status cards with spend bars |
 | `src/components/LLMInsights.jsx` | AI analysis panel with expandable per-campaign cards |
 | `src/components/ActionOutputModal.jsx` | Modal showing API requests, Slack notifications, tickets |
-| `src/components/AgentFlowDiagram.jsx` | SVG decision flow diagram |
+| `src/components/AgentFlowDiagram.jsx` | SVG decision flow diagram + Performance Modifier decision matrix (tabbed) |
 | `src/components/StatusBadge.jsx` | Reusable colored status indicator |
 
 ## Development Patterns
@@ -95,9 +96,9 @@ The `generateActionOutput()` function in `gemini.js` returns different shapes pe
 { type, request: { method, endpoint, body }, response: { status, body }, slackNotification }
 ```
 
-**BID_ADJUSTMENT_RECOMMENDED:**
+**BID_ADJUSTMENT_APPLIED:**
 ```js
-{ type, recommendation: { status, proposedChange: { type, direction, percentage }, currentSpend, targetSpend, variance }, draftApiCall }
+{ type, adjustment: { status, change: { type, direction, percentage }, currentSpend, targetSpend, variance }, apiCall }
 ```
 
 **DATA_DISCREPANCY_TICKET:**

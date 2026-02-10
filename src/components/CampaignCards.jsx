@@ -57,47 +57,58 @@ function getDataQualityIssues(campaign) {
   if (campaign.discrepancy) {
     issues.push({
       label: 'Spend Mismatch',
-      detail: `API reports ${formatCurrency(campaign.discrepancy.api)} but tracker shows ${formatCurrency(campaign.discrepancy.internal)}`,
       severity: 'high',
+      comparison: { api: formatCurrency(campaign.discrepancy.api), tracker: formatCurrency(campaign.discrepancy.internal) },
     });
   }
 
   if (b?.nameSimilarity?.score < 0.7) {
+    const apiName = b.nameSimilarity.platformName;
+    const trkName = b.nameSimilarity.trackerName;
     issues.push({
       label: 'Name Mismatch',
-      detail: `Similarity score ${Math.round(b.nameSimilarity.score * 100)}% — names differ between platform and tracker`,
       severity: 'high',
+      note: `${Math.round(b.nameSimilarity.score * 100)}% similarity`,
+      comparison: apiName && trkName ? { api: apiName, tracker: trkName } : null,
+      detail: !(apiName && trkName) ? 'Names differ between platform and tracker' : null,
     });
   }
 
   if (b?.metadataMatch?.score < 0.7) {
     const details = b.metadataMatch.details;
-    const badFields = [
-      ...(details?.mismatchedFields?.map(f => f.field) || []),
-      ...(details?.missingFields || []),
-    ];
+    const mismatched = details?.mismatchedFields || [];
+    const missing = details?.missingFields || [];
+    const rows = mismatched.map(f => ({ field: f.field, api: String(f.platform), tracker: String(f.tracker) }));
     issues.push({
       label: 'Metadata Corruption',
-      detail: badFields.length > 0
-        ? `Fields affected: ${badFields.join(', ')}`
-        : `Match score ${Math.round(b.metadataMatch.score * 100)}% — fields missing or invalid`,
       severity: 'medium',
+      fieldRows: rows.length > 0 ? rows : null,
+      detail: missing.length > 0 ? `Missing in tracker: ${missing.join(', ')}` : rows.length === 0 ? `Match score ${Math.round(b.metadataMatch.score * 100)}%` : null,
     });
   }
 
   if (b?.freshness?.score < 0.4) {
+    const platformAge = b.freshness.platformAgeHours;
+    const trackerAge = b.freshness.trackerAgeHours;
+    const hasAges = platformAge != null && trackerAge != null;
     issues.push({
       label: 'Stale Data',
-      detail: `Freshness score ${Math.round(b.freshness.score * 100)}% — data may be 12+ hours old`,
       severity: 'medium',
+      comparison: hasAges ? { api: `${platformAge}h ago`, tracker: `${trackerAge}h ago` } : null,
+      detail: !hasAges ? `Freshness score ${Math.round(b.freshness.score * 100)}% — data may be 12+ hours old` : null,
     });
   }
 
   if (b?.spendConsistency?.details?.hasDiscrepancy && !campaign.discrepancy) {
+    const d = b.spendConsistency.details;
     issues.push({
       label: 'Spend Inconsistency',
-      detail: `${b.spendConsistency.details.discrepancyPct}% difference between sources`,
       severity: 'high',
+      note: `${d.discrepancyPct}% gap`,
+      comparison: d.platformSpend != null && d.trackerSpend != null
+        ? { api: formatCurrency(d.platformSpend), tracker: formatCurrency(d.trackerSpend) }
+        : null,
+      detail: !(d.platformSpend != null && d.trackerSpend != null) ? `${d.discrepancyPct}% difference between sources` : null,
     });
   }
 
@@ -143,7 +154,7 @@ function CampaignCard({ campaign, index }) {
       <div className="mb-2">
         <div className="flex justify-between text-sm mb-1">
           <span className="text-gray-400">Spend</span>
-          <span className={overBudget ? 'text-status-critical font-semibold' : 'text-white'}>
+          <span className={status === 'critical' || paused ? 'text-status-critical font-semibold' : status === 'warning' ? 'text-status-warning font-semibold' : 'text-white'}>
             {formatCurrency(spend)} / {formatCurrency(cap)}
           </span>
         </div>
@@ -153,7 +164,7 @@ function CampaignCard({ campaign, index }) {
           <div
             className={`
               h-full rounded-full transition-all duration-1000 ease-out
-              ${isCritical ? 'bg-red-500' : overBudget ? 'bg-status-critical' : status === 'warning' ? 'bg-status-warning' : 'bg-status-healthy'}
+              ${status === 'critical' || paused ? 'bg-status-critical' : status === 'warning' ? 'bg-status-warning' : 'bg-status-healthy'}
             `}
             style={{
               width: `${Math.min(progress, 100)}%`,
@@ -187,14 +198,46 @@ function CampaignCard({ campaign, index }) {
             </svg>
             <span className="text-xs text-amber-400 font-semibold uppercase">Data Quality — Human Review Required</span>
           </div>
-          <div className="space-y-1.5">
+          <div className="space-y-2.5">
             {dataIssues.map((issue, i) => (
-              <div key={i} className="flex items-start gap-2">
-                <span className={`mt-0.5 w-1.5 h-1.5 rounded-full flex-shrink-0 ${issue.severity === 'high' ? 'bg-amber-400' : 'bg-amber-600'}`} />
-                <div>
-                  <span className="text-xs text-amber-300 font-medium">{issue.label}: </span>
-                  <span className="text-xs text-gray-400">{issue.detail}</span>
+              <div key={i}>
+                <div className="flex items-center gap-2 mb-1">
+                  <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${issue.severity === 'high' ? 'bg-amber-400' : 'bg-amber-600'}`} />
+                  <span className="text-xs text-amber-300 font-medium">{issue.label}</span>
+                  {issue.note && <span className="text-[10px] text-amber-500/80 font-mono">({issue.note})</span>}
                 </div>
+                {issue.comparison && (
+                  <div className="ml-3.5 grid grid-cols-2 gap-1.5 text-[11px]">
+                    <div className="bg-gray-800/60 rounded px-2 py-1">
+                      <div className="text-gray-500 text-[10px] mb-0.5">API</div>
+                      <div className="text-white font-mono truncate" title={issue.comparison.api}>{issue.comparison.api}</div>
+                    </div>
+                    <div className="bg-gray-800/60 rounded px-2 py-1">
+                      <div className="text-gray-500 text-[10px] mb-0.5">Tracker</div>
+                      <div className="text-white font-mono truncate" title={issue.comparison.tracker}>{issue.comparison.tracker}</div>
+                    </div>
+                  </div>
+                )}
+                {issue.fieldRows && (
+                  <div className="ml-3.5 space-y-1">
+                    {issue.fieldRows.map((row, j) => (
+                      <div key={j}>
+                        <div className="text-[10px] text-gray-500 mb-0.5">{row.field}</div>
+                        <div className="grid grid-cols-2 gap-1.5 text-[11px]">
+                          <div className="bg-gray-800/60 rounded px-2 py-1">
+                            <div className="text-gray-500 text-[10px] mb-0.5">API</div>
+                            <div className="text-white font-mono truncate" title={row.api}>{row.api}</div>
+                          </div>
+                          <div className="bg-gray-800/60 rounded px-2 py-1">
+                            <div className="text-gray-500 text-[10px] mb-0.5">Tracker</div>
+                            <div className="text-white font-mono truncate" title={row.tracker}>{row.tracker}</div>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {issue.detail && <div className="ml-3.5 text-xs text-gray-400">{issue.detail}</div>}
               </div>
             ))}
           </div>

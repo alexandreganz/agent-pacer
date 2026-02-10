@@ -1,8 +1,9 @@
 /**
  * Time-awareness utility for off-hours protocol.
  *
- * During off-hours (nights/weekends), the agent lowers its auto-pause
- * threshold because no human operators are available to intervene quickly.
+ * During off-hours (nights/weekends), the agent lowers the critical
+ * threshold from 50% to 30% — meaning campaigns get classified as
+ * critical (and auto-paused) sooner when no humans are available.
  */
 
 // Module-level flag for demo toggle
@@ -64,10 +65,11 @@ export function getTimeContext(date = new Date()) {
     isNight: night,
     isWeekend: weekend,
     reason,
-    // Lower threshold during off-hours: pause at 30% instead of 50%
+    // Critical threshold: campaigns above this variance get auto-paused
+    // Off-hours lowers from 50% to 30% — agent acts sooner when no humans are available
+    criticalThreshold: offHours ? 30 : 50,
+    // Legacy alias for backward compatibility
     pauseThresholdOverride: offHours ? 30 : 50,
-    // Escalate warnings more aggressively during off-hours
-    warningEscalation: offHours,
     timestamp: date.toISOString(),
   };
 }

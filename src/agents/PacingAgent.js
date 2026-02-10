@@ -7,6 +7,7 @@
 
 import { VarianceAnalyzer } from './VarianceAnalyzer';
 import { ConfidenceScorer } from './ConfidenceScorer';
+import { PerformanceModifier } from './PerformanceModifier';
 import { getTimeContext } from '../utils/timeContext';
 
 /**
@@ -31,20 +32,21 @@ export const ActionType = {
   ALERT: 'alert',
   PAUSE: 'pause',
   ESCALATE: 'escalate',
-  RECOMMEND_BID: 'recommend_bid',
-  RECOMMEND_BUDGET: 'recommend_budget',
+  ADJUST_BID: 'adjust_bid',
 };
 
 export class PacingAgent {
   constructor(options = {}) {
     this.varianceAnalyzer = new VarianceAnalyzer({
       healthyThreshold: options.healthyThreshold || 10.0,
-      warningThreshold: options.warningThreshold || 25.0,
+      criticalThreshold: options.criticalThreshold || 50.0,
     });
 
     this.confidenceScorer = new ConfidenceScorer({
       confidenceThreshold: options.confidenceThreshold || 0.7,
     });
+
+    this.performanceModifier = new PerformanceModifier();
 
     this.state = AgentState.IDLE;
     this.logs = [];
@@ -91,6 +93,11 @@ export class PacingAgent {
   async run(data) {
     this.logs = [];
     this.timeContext = getTimeContext();
+
+    // Adjust critical threshold based on time context:
+    // Business hours: critical at >50%, Off-hours: critical at >30%
+    this.varianceAnalyzer.criticalThreshold = this.timeContext.criticalThreshold;
+
     const result = {
       campaigns: [],
       overallStatus: 'healthy',
@@ -113,7 +120,7 @@ export class PacingAgent {
         this.log('  ║   OFF-HOURS PROTOCOL ACTIVE                   ║', 'warning');
         this.log('  ╚═══════════════════════════════════════════════╝', 'warning');
         this.log(`  ${this.timeContext.reason}`, 'warning');
-        this.log(`  Auto-pause threshold lowered to ${this.timeContext.pauseThresholdOverride}%`, 'warning');
+        this.log(`  Critical threshold lowered to ${this.timeContext.criticalThreshold}% (from 50%)`, 'warning');
         this.log('', 'info');
         await this.delay(400);
       }
@@ -167,14 +174,46 @@ export class PacingAgent {
           actualSpend: campaign.platformSpend,
         });
 
+        // Assess campaign performance from metrics
+        const perfAssessment = this.performanceModifier.assessPerformance(
+          campaign.metrics, campaign.platform
+        );
+
+        // Modify severity based on performance
+        const severityMod = this.performanceModifier.modifySeverity(
+          analysis.severity, analysis.direction, perfAssessment.rating
+        );
+
+        // Apply severity modification
+        analysis.severity = severityMod.adjustedSeverity;
+
         analysisResults.push({
           ...campaign,
           ...analysis,
+          performanceRating: perfAssessment.rating,
+          performanceSignals: perfAssessment.signals,
+          performanceScore: perfAssessment.score,
+          performanceRoas: perfAssessment.roas,
+          severityModified: severityMod.wasModified,
+          originalSeverity: severityMod.originalSeverity,
+          severityModReason: severityMod.reason,
         });
+
+        // Log performance assessment for non-normal ratings
+        if (perfAssessment.rating !== 'normal') {
+          const ratingLabel = perfAssessment.rating === 'fraud_signal' ? 'FRAUD SIGNAL' : perfAssessment.rating.toUpperCase();
+          this.log(`  Performance: ${ratingLabel} — ${perfAssessment.signals[0]}`, perfAssessment.rating === 'fraud_signal' ? 'critical' : 'info');
+        }
+
+        // Log severity modification
+        if (severityMod.wasModified) {
+          this.log(`  Severity ${severityMod.originalSeverity} → ${severityMod.adjustedSeverity}: ${severityMod.reason}`, 'warning');
+          await this.delay(200);
+        }
 
         if (analysis.severity === 'critical') {
           hasCritical = true;
-          if (analysis.direction === 'overspending' && analysis.variancePct > 100) {
+          if (analysis.direction === 'overspending') {
             this.log('', 'info');
             this.log('  ╔═══════════════════════════════════╗', 'critical');
             this.log('  ║   CRITICAL OVERSPEND ALERT   ║', 'critical');
@@ -294,15 +333,16 @@ export class PacingAgent {
           })),
         });
       } else if (result.overallStatus === 'critical') {
-        // Find critical campaigns
+        // Critical = above the dynamic threshold (50% business hours, 30% off-hours)
+        // Critical always means auto-pause for overspending campaigns
         const criticalCampaigns = analysisResults.filter(a => a.severity === 'critical');
         for (const campaign of criticalCampaigns) {
-          if (campaign.direction === 'overspending' && campaign.variancePct > this.timeContext.pauseThresholdOverride) {
+          if (campaign.direction === 'overspending') {
             this.log('Initiating emergency protocol...', 'critical');
             await this.delay(400);
             this.log('  ✓ Campaign PAUSED automatically', 'success');
             if (this.timeContext.isOffHours) {
-              this.log(`  ✓ Off-hours threshold applied (${this.timeContext.pauseThresholdOverride}% vs normal 50%)`, 'warning');
+              this.log(`  ✓ Off-hours protocol: critical threshold at ${this.timeContext.criticalThreshold}% (vs normal 50%)`, 'warning');
             }
             await this.delay(200);
             this.log('  ✓ Slack alert sent to #media-ops', 'success');
@@ -317,7 +357,7 @@ export class PacingAgent {
               type: ActionType.PAUSE,
               campaignId: campaign.id,
               campaignName: campaign.name,
-              reason: `Critical overspend: ${campaign.variancePct}%${this.timeContext.isOffHours ? ' (off-hours threshold)' : ''}`,
+              reason: `Critical overspend: +${campaign.variancePct}% (threshold: ${this.timeContext.criticalThreshold}%)`,
             });
 
             // Mark campaign as paused in results
@@ -326,17 +366,27 @@ export class PacingAgent {
               analysisResults[idx].paused = true;
             }
           } else {
-            this.log('Generating bid adjustment recommendation...', 'info');
+            // Critical underspending — auto-adjust bid to recover spend
+            this.log('Executing autonomous bid adjustment...', 'info');
             await this.delay(400);
-            const bidChange = campaign.direction === 'underspending' ? 12 : -15;
-            this.log(`  Recommended: ${bidChange > 0 ? 'Increase' : 'Decrease'} bid by ${Math.abs(bidChange)}%`, 'info');
+            const baseBid = 15;
+            const bidChange = this.performanceModifier.calculateBidAdjustment(baseBid, campaign.performanceRating || 'normal', campaign.direction);
+            const bidModifier = 1 + (bidChange / 100);
+            this.log(`  ✓ Bid increased by ${bidChange}%${bidChange !== baseBid ? ` (adjusted from ${baseBid}% based on ${campaign.performanceRating} performance)` : ''}`, 'success');
+            await this.delay(200);
+            this.log(`  ✓ POST /v14/customers/.../campaigns/${campaign.id}:updateBids`, 'info');
+            this.log(`    { bidModifier: ${bidModifier.toFixed(2)}, reason: "Variance correction: ${campaign.variancePct}%" }`, 'info');
+            await this.delay(200);
+            this.log(`  ✓ Response: 200 OK — Bid modifier updated successfully`, 'success');
+            await this.delay(200);
+            this.log(`  ✓ Slack notification sent to #media-ops`, 'success');
 
             result.actions.push({
-              type: ActionType.RECOMMEND_BID,
+              type: ActionType.ADJUST_BID,
               campaignId: campaign.id,
               campaignName: campaign.name,
               bidChangePercent: bidChange,
-              reason: `${campaign.severity} ${campaign.direction}: ${campaign.variancePct}%`,
+              reason: `Critical underspend: ${campaign.variancePct}%`,
             });
           }
         }
@@ -344,13 +394,22 @@ export class PacingAgent {
       } else if (result.overallStatus === 'warning') {
         const warningCampaigns = analysisResults.filter(a => a.severity === 'warning');
         for (const campaign of warningCampaigns) {
-          this.log('Generating bid adjustment recommendation...', 'info');
+          this.log('Executing autonomous bid adjustment...', 'info');
           await this.delay(400);
-          const bidChange = campaign.direction === 'underspending' ? 12 : -10;
-          this.log(`  Recommended: ${bidChange > 0 ? 'Increase' : 'Decrease'} bid by ${Math.abs(bidChange)}%`, 'info');
+          const baseBid = campaign.direction === 'underspending' ? 12 : -10;
+          const bidChange = this.performanceModifier.calculateBidAdjustment(baseBid, campaign.performanceRating || 'normal', campaign.direction);
+          const bidModifier = bidChange > 0 ? 1 + (bidChange / 100) : 1 - (Math.abs(bidChange) / 100);
+          this.log(`  ✓ Bid ${bidChange > 0 ? 'increased' : 'decreased'} by ${Math.abs(bidChange)}%${bidChange !== baseBid ? ` (adjusted from ${Math.abs(baseBid)}% based on ${campaign.performanceRating} performance)` : ''}`, 'success');
+          await this.delay(200);
+          this.log(`  ✓ POST /v14/customers/.../campaigns/${campaign.id}:updateBids`, 'info');
+          this.log(`    { bidModifier: ${bidModifier.toFixed(2)}, reason: "Variance correction: ${campaign.variancePct}%" }`, 'info');
+          await this.delay(200);
+          this.log(`  ✓ Response: 200 OK — Bid modifier updated successfully`, 'success');
+          await this.delay(200);
+          this.log(`  ✓ Slack notification sent to #media-ops`, 'success');
 
           result.actions.push({
-            type: ActionType.RECOMMEND_BID,
+            type: ActionType.ADJUST_BID,
             campaignId: campaign.id,
             campaignName: campaign.name,
             bidChangePercent: bidChange,
@@ -376,8 +435,8 @@ export class PacingAgent {
         this.log('  STATUS: ALL SYSTEMS NOMINAL', 'success');
         this.log('  No action required', 'success');
       } else if (result.overallStatus === 'warning') {
-        this.log('  STATUS: ACTION RECOMMENDED', 'warning');
-        this.log('  Awaiting human approval for bid change', 'warning');
+        this.log('  STATUS: BID AUTO-ADJUSTED', 'warning');
+        this.log('  Bid adjustment applied autonomously to prevent risk', 'warning');
       } else if (result.overallStatus === 'critical') {
         this.log('  STATUS: CRITICAL - AUTO-PAUSED', 'critical');
         this.log('  Campaign paused, awaiting investigation', 'critical');
@@ -407,6 +466,11 @@ export class PacingAgent {
           api: reconciled[i].platformSpend,
           internal: reconciled[i].trackerSpend,
         } : null,
+        performanceRating: a.performanceRating || 'normal',
+        performanceSignals: a.performanceSignals || [],
+        severityModified: a.severityModified || false,
+        originalSeverity: a.originalSeverity || a.severity,
+        severityModReason: a.severityModReason || '',
       }));
 
       this.transition(AgentState.COMPLETE);

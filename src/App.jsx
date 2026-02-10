@@ -117,7 +117,7 @@ function App() {
         title: 'Critical Overspend - Auto-Paused',
         summary: `Emergency protocol executed. One or more campaigns exceeded safe spending thresholds and have been automatically paused.`,
         details: [
-          'Critical overspend detected (>25% variance)',
+          'Critical overspend detected — exceeded safe spending threshold',
           'Campaign automatically paused to prevent further budget loss',
           'Incident ticket created for investigation',
           'Slack notification sent to #media-ops',
@@ -201,7 +201,6 @@ function App() {
     // Create and run agent
     const agent = new PacingAgent({
       healthyThreshold: 10.0,
-      warningThreshold: 25.0,
       confidenceThreshold: 0.7,
     });
     agentRef.current = agent;

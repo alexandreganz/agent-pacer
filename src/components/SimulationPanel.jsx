@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { getForceOffHours, setForceOffHours } from '../utils/timeContext';
+import { getForceOffHours, setForceOffHours, isOffHours, isNightTime, isWeekend } from '../utils/timeContext';
 
 /**
  * SimulationPanel - Scenario selection buttons with variation tooltips.
@@ -109,11 +109,13 @@ function VariationTooltip({ config, isVisible }) {
 
 export function SimulationPanel({ activeScenario, onSelectScenario, isRunning, variationInfo }) {
   const [hoveredScenario, setHoveredScenario] = useState(null);
-  const [offHoursEnabled, setOffHoursEnabled] = useState(getForceOffHours());
+  const [forceOffHours, setForceOff] = useState(getForceOffHours());
+  const naturallyOffHours = isNightTime() || isWeekend();
+  const effectiveOffHours = forceOffHours || naturallyOffHours;
 
   const toggleOffHours = () => {
-    const newValue = !offHoursEnabled;
-    setOffHoursEnabled(newValue);
+    const newValue = !forceOffHours;
+    setForceOff(newValue);
     setForceOffHours(newValue);
   };
 
@@ -172,17 +174,20 @@ export function SimulationPanel({ activeScenario, onSelectScenario, isRunning, v
             onClick={toggleOffHours}
             className={`
               flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium transition-all border
-              ${offHoursEnabled
+              ${effectiveOffHours
                 ? 'bg-amber-500/20 text-amber-400 border-amber-500/50'
                 : 'bg-gray-700 text-gray-400 border-gray-600 hover:border-gray-500'
               }
             `}
-            title="Simulate off-hours (nights/weekends) — lowers auto-pause threshold to 30%"
+            title={naturallyOffHours && !forceOffHours
+              ? 'Off-hours active (real time) — toggle to override'
+              : 'Simulate off-hours (nights/weekends) — lowers auto-pause threshold to 30%'
+            }
           >
-            <span>{offHoursEnabled ? '🌙' : '☀️'}</span>
-            <span>Off-Hours</span>
-            <div className={`w-7 h-4 rounded-full relative transition-colors ${offHoursEnabled ? 'bg-amber-500' : 'bg-gray-600'}`}>
-              <div className={`absolute top-0.5 w-3 h-3 rounded-full bg-white transition-all ${offHoursEnabled ? 'left-3.5' : 'left-0.5'}`} />
+            <span>{effectiveOffHours ? '🌙' : '☀️'}</span>
+            <span>{naturallyOffHours && !forceOffHours ? 'Off-Hours (Live)' : 'Off-Hours'}</span>
+            <div className={`w-7 h-4 rounded-full relative transition-colors ${forceOffHours ? 'bg-amber-500' : naturallyOffHours ? 'bg-amber-500/50' : 'bg-gray-600'}`}>
+              <div className={`absolute top-0.5 w-3 h-3 rounded-full bg-white transition-all ${forceOffHours ? 'left-3.5' : 'left-0.5'}`} />
             </div>
           </button>
 

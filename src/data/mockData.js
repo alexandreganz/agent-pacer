@@ -475,7 +475,52 @@ const scenarioCVariations = [
     };
   },
 
-  // Variation 4: Platform-wide issue
+  // Variation 4: Profitable overspend (demonstrates severity downgrade)
+  () => {
+    const now = new Date();
+    const templates = random.pickN(campaignTemplates, random.int(5, 7));
+    const campaigns = buildCampaigns(templates, now);
+
+    const problemIdx = random.int(0, campaigns.length - 1);
+    const overVariance = random.between(15, 30);
+
+    campaigns.forEach((c, idx) => {
+      if (idx === problemIdx) {
+        c.spend = Math.round(c.baseBudget * (1 + overVariance / 100));
+        c.warning = { type: 'overpacing', variance: overVariance };
+        // Override metrics to be highly profitable — demonstrates performance modifier downgrade
+        c.metrics = {
+          impressions: random.int(80000, 150000),
+          clicks: random.int(3000, 6000),
+          ctr: parseFloat(random.between(2.5, 5.0).toFixed(2)),
+          cpc: parseFloat(random.between(0.5, 1.5).toFixed(2)),
+          cpm: parseFloat(random.between(4, 8).toFixed(2)),
+          conversions: random.int(80, 200),
+          revenue: 0, // set below
+          roas: 0,    // set below
+        };
+        c.metrics.revenue = Math.round(c.metrics.conversions * random.between(40, 90));
+        c.metrics.roas = parseFloat((c.metrics.revenue / c.spend).toFixed(2));
+        // Ensure ROAS ≥ 3.0 for "strong" rating
+        if (c.metrics.roas < 3.0) {
+          c.metrics.revenue = Math.round(c.spend * random.between(3.2, 5.5));
+          c.metrics.roas = parseFloat((c.metrics.revenue / c.spend).toFixed(2));
+        }
+      } else {
+        c.spend = Math.round(c.baseBudget * (1 + random.between(-5, 5) / 100));
+        c.metrics = generateMetrics(c);
+      }
+    });
+
+    return {
+      variation: 'Profitable Overspend',
+      description: `${campaigns[problemIdx].name} overspending at +${overVariance.toFixed(0)}% but delivering ${campaigns[problemIdx].metrics.roas}x ROAS — performance modifier will downgrade severity`,
+      campaigns,
+      problemIndices: [problemIdx],
+    };
+  },
+
+  // Variation 5: Platform-wide issue
   () => {
     const now = new Date();
     const templates = random.pickN(campaignTemplates, random.int(6, 8));

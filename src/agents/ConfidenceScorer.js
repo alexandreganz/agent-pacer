@@ -231,11 +231,15 @@ export class ConfidenceScorer {
           score: Math.round(nameSimilarity * 100) / 100,
           weight: this.nameSimilarityWeight,
           weighted: Math.round(nameSimilarity * this.nameSimilarityWeight * 100) / 100,
+          platformName,
+          trackerName,
         },
         freshness: {
           score: Math.round(freshness * 100) / 100,
           weight: this.freshnessWeight,
           weighted: Math.round(freshness * this.freshnessWeight * 100) / 100,
+          platformAgeHours: Math.round(((new Date()) - new Date(platformTimestamp)) / (1000 * 60 * 60) * 10) / 10,
+          trackerAgeHours: Math.round(((new Date()) - new Date(trackerTimestamp)) / (1000 * 60 * 60) * 10) / 10,
         },
         spendConsistency: {
           score: Math.round(spendConsistency.score * 100) / 100,
